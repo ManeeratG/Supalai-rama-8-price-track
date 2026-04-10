@@ -1,8 +1,8 @@
 # Raw per-run snapshots (large, not needed in git)
 data/raw/
 
-# Generated Excel (regenerated on each run; binary bloats git)
-*.xlsx
+# Excel is committed so users can download it from GitHub
+# *.xlsx
 
 # Python
 __pycache__/

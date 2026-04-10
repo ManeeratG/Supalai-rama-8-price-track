@@ -1,0 +1,48 @@
+name: Scrape Supalai Rama 8 Prices
+
+on:
+  # Run on the 1st and 15th of every month at 08:00 Bangkok time (01:00 UTC)
+  schedule:
+    - cron: "0 1 1,15 * *"
+
+  # Also allow triggering manually from the GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install pandas openpyxl playwright
+
+      - name: Install Playwright Chromium browser
+        run: playwright install chromium --with-deps
+
+      - name: Run scraper
+        run: python scraper.py
+
+      - name: Commit results back to repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Supalai_Rama8_Price_Track.xlsx data/property_history.json || true
+
+          # Only commit if there are changes
+          if git diff --cached --quiet; then
+            echo "No new listings found — nothing to commit."
+          else
+            DATESTAMP=$(date '+%Y-%m-%d')
+            git commit -m "Data update: ${DATESTAMP}"
+            git push
+          fi

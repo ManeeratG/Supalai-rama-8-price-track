@@ -1,0 +1,17 @@
+# Raw per-run snapshots (large, not needed in git)
+data/raw/
+
+# Generated Excel (regenerated on each run; binary bloats git)
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db

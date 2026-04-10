@@ -452,48 +452,38 @@ def _scrape(page: Page, name: str, urls: list[str], run_date: str,
 
 # ─────────────────────────────────────────
 #  SITE-SPECIFIC SCRAPERS  (thin wrappers over _scrape)
+#
+#  NOTE: DDproperty.com is protected by Cloudflare Turnstile.
+#  GitHub Actions IPs (Azure/AWS datacenters) are automatically blocked.
+#  It is kept here as a best-effort attempt; it will return 0 results if
+#  Cloudflare fires. PropertyHub and LivingInsider are smaller Thai sites
+#  that do not use Cloudflare and should work reliably.
 # ─────────────────────────────────────────
 
 def scrape_ddproperty(page: Page, run_date: str) -> list[dict]:
+    """DDproperty — likely blocked by Cloudflare from CI, kept as best-effort."""
     return _scrape(page, "DDproperty", [
-        # Search page (all condos matching our project name)
         "https://www.ddproperty.com/en/property-for-sale"
         "?freetext=Supalai+City+Resort+Rama+8&property_type_code%5B%5D=CONDO",
-        # Fallback: plain text search
-        "https://www.ddproperty.com/en/property-for-sale"
-        "?freetext=ศุภาลัย+ซิตี้+รีสอร์ท+พระราม+8",
-    ], run_date, relevance_filter=False)   # search already scoped to our project
-
-
-def scrape_fazwaz(page: Page, run_date: str) -> list[dict]:
-    return _scrape(page, "Fazwaz", [
-        "https://www.fazwaz.com/condominium-for-sale/thailand/bangkok"
-        "/bang-phlat-district/supalai-city-resort-rama-8",
-        "https://www.fazwaz.com/property-for-sale/thailand/bangkok"
-        "/bang-phlat-district/supalai-city-resort-rama-8",
     ], run_date, relevance_filter=False)
 
 
-def scrape_hipflat(page: Page, run_date: str) -> list[dict]:
-    return _scrape(page, "Hipflat", [
-        "https://www.hipflat.co.th/en/condo/supalai-city-resort-rama-8/listings",
-        "https://www.hipflat.co.th/search/en/sale/condos--supalai-city-resort-rama-8",
-    ], run_date, relevance_filter=False)
+def scrape_propertyhub(page: Page, run_date: str) -> list[dict]:
+    """PropertyHub.in.th — Thai portal, no Cloudflare."""
+    return _scrape(page, "PropertyHub", [
+        "https://www.propertyhub.in.th/th/sale/condo"
+        "?keyword=%E0%B8%A8%E0%B8%B8%E0%B8%A0%E0%B8%B2%E0%B8%A5%E0%B8%B1%E0%B8%A2+%E0%B8%8B%E0%B8%B4%E0%B8%95%E0%B8%B5%E0%B9%89+%E0%B8%A3%E0%B8%B5%E0%B8%AA%E0%B8%AD%E0%B8%A3%E0%B9%8C%E0%B8%97+%E0%B8%9E%E0%B8%A3%E0%B8%B0%E0%B8%A3%E0%B8%B2%E0%B8%A1+8",
+        "https://www.propertyhub.in.th/th/sale/condo?keyword=supalai+city+resort+rama+8",
+        "https://www.propertyhub.in.th/property/sale?type=condo&keyword=supalai+city+resort+rama+8",
+    ], run_date, relevance_filter=True)
 
 
-def scrape_baania(page: Page, run_date: str) -> list[dict]:
-    return _scrape(page, "Baania", [
-        "https://www.baania.com/en/search"
-        "?searchText=Supalai+City+Resort+Rama+8&listingType=sale",
-    ], run_date, relevance_filter=True)   # returns mixed results → keep filter
-
-
-def scrape_propertyscout(page: Page, run_date: str) -> list[dict]:
-    return _scrape(page, "PropertyScout", [
-        "https://propertyscout.co.th/en/search"
-        "?query=Supalai+City+Resort+Rama+8&type=sale&property=condo",
-        "https://propertyscout.co.th/en/search"
-        "?query=supalai+rama+8&type=sale&property=condo",
+def scrape_livinginsider(page: Page, run_date: str) -> list[dict]:
+    """LivingInsider.com — Thai portal, no Cloudflare."""
+    return _scrape(page, "LivingInsider", [
+        "https://www.livinginsider.com/searchword/%E0%B8%A8%E0%B8%B8%E0%B8%A0%E0%B8%B2%E0%B8%A5%E0%B8%B1%E0%B8%A2-%E0%B8%8B%E0%B8%B4%E0%B8%95%E0%B8%B5%E0%B9%89-%E0%B8%A3%E0%B8%B5%E0%B8%AA%E0%B8%AD%E0%B8%A3%E0%B9%8C%E0%B8%97-%E0%B8%9E%E0%B8%A3%E0%B8%B0%E0%B8%A3%E0%B8%B2%E0%B8%A1-8/Condo/sell.html",
+        "https://www.livinginsider.com/searchword/Supalai-City-Resort-Rama-8/Condo/sell.html",
+        "https://www.livinginsider.com/search?keyword=supalai+city+resort+rama+8&property_type=condo&listing_type=sell",
     ], run_date, relevance_filter=True)
 
 
@@ -646,11 +636,9 @@ def main():
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     scrapers = [
-        ("DDproperty",   scrape_ddproperty),
-        ("Fazwaz",       scrape_fazwaz),
-        ("Hipflat",      scrape_hipflat),
-        ("Baania",       scrape_baania),
-        ("PropertyScout",scrape_propertyscout),
+        ("PropertyHub",   scrape_propertyhub),    # propertyhub.in.th
+        ("LivingInsider", scrape_livinginsider),  # livinginsider.com
+        ("DDproperty",    scrape_ddproperty),      # ddproperty.com (Cloudflare — best-effort)
     ]
 
     all_raw: list[dict] = []

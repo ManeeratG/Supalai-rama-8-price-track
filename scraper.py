@@ -239,495 +239,251 @@ def is_new_or_changed(record: dict, history: list[dict]) -> bool:
 
 
 # ─────────────────────────────────────────
-#  SITE-SPECIFIC SCRAPERS
+#  BROWSER HELPERS
 # ─────────────────────────────────────────
 
-def _extract_cards(page: Page, selectors: list[str], min_count: int = 2) -> list:
-    """Try a list of CSS selectors and return the first that yields ≥ min_count elements."""
-    for sel in selectors:
-        try:
-            cards = page.query_selector_all(sel)
-            if len(cards) >= min_count:
-                return cards
-        except Exception:
-            pass
-    return []
+# JavaScript injected into the page to find listing cards.
+# Works on React/Next.js sites where class names are dynamically hashed,
+# by doing substring matching on class names and inspecting rendered text.
+_JS_FIND_CARDS = """
+() => {
+    const isCard = (el) => {
+        const text = el.innerText || el.textContent || '';
+        if (text.length < 80 || text.length > 5000) return false;
+        if (!el.querySelector('a[href]'))             return false;
+        return /\\d[\\d,]{4,}/.test(text);  // contains a 5+ digit number (price)
+    };
+
+    const patterns = [
+        '[class*="card"]',     '[class*="Card"]',
+        '[class*="listing"]',  '[class*="Listing"]',
+        '[class*="property"]', '[class*="Property"]',
+        '[class*="result"]',   '[class*="Result"]',
+        '[class*="item"]',     '[class*="Item"]',
+        'article',             'li[class]',
+    ];
+
+    let best = [];
+    for (const p of patterns) {
+        try {
+            const found = Array.from(document.querySelectorAll(p)).filter(isCard);
+            if (found.length > best.length) best = found;
+        } catch(e) {}
+    }
+
+    // Keep only the most-specific cards (remove ancestors of other cards)
+    const final = best.filter(el =>
+        !best.some(other => other !== el && el.contains(other))
+    );
+
+    return final.slice(0, 60).map(el => ({
+        text: (el.innerText || el.textContent || '').substring(0, 1500).trim(),
+        href: (el.querySelector('a[href]') || {}).href || '',
+    }));
+}
+"""
 
 
-def _text(el, selector: str) -> str:
-    """Safe inner_text from a child element."""
+def _load_page(page: Page, url: str, extra_wait_ms: int = 4000):
+    """Navigate, wait for network to settle, then scroll to trigger lazy loads."""
+    page.goto(url, wait_until="domcontentloaded", timeout=45_000)
     try:
-        child = el.query_selector(selector)
-        return child.inner_text().strip() if child else ""
+        page.wait_for_load_state("networkidle", timeout=10_000)
     except Exception:
-        return ""
-
-
-def _attr(el, selector: str, attr: str) -> str:
-    """Safe attribute from a child element."""
+        pass   # networkidle timeout is fine — proceed anyway
+    page.wait_for_timeout(extra_wait_ms)
+    # Scroll halfway then to bottom to trigger lazy-loaded cards
     try:
-        child = el.query_selector(selector)
-        return (child.get_attribute(attr) or "").strip() if child else ""
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.5)")
+        page.wait_for_timeout(800)
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(800)
     except Exception:
-        return ""
+        pass
 
 
-def scrape_ddproperty(page: Page, run_date: str) -> list[dict]:
-    records = []
-    url = (
-        "https://www.ddproperty.com/en/property-for-sale"
-        "?freetext=Supalai+City+Resort+Rama+8"
-        "&property_type_code%5B%5D=CONDO"
+def _js_cards(page: Page) -> list[dict]:
+    """Run the JS card-finder in the live browser DOM; returns list of {text, href}."""
+    try:
+        return page.evaluate(_JS_FIND_CARDS) or []
+    except Exception:
+        return []
+
+
+def _save_debug_html(page: Page, site_name: str):
+    """Save page HTML for debugging when no cards are found."""
+    try:
+        debug_dir = DATA_DIR / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        path = debug_dir / f"{site_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+        path.write_text(page.content(), encoding="utf-8")
+        print(f"    Debug HTML saved → {path}")
+    except Exception:
+        pass
+
+
+def _parse_card(card: dict, source: str, run_date: str) -> dict | None:
+    """
+    Parse a single card's text blob into a structured record.
+    Returns None if no valid price can be found.
+    """
+    text = card.get("text", "")
+    href = card.get("href", "")
+
+    # ── Price ──────────────────────────────────────────────────
+    price = None
+    # Thai million: "2.5 ล้าน" or "2.5M"
+    m = re.search(r'([\d,]+\.?\d*)\s*(?:ล้าน|M\b)', text)
+    if m:
+        price = int(float(m.group(1).replace(',', '')) * 1_000_000)
+    if not price:
+        # Plain numbers ≥ 6 digits (≥ 100,000 THB) — take the first plausible one
+        for raw in re.findall(r'[\d,]+', text):
+            val = int(raw.replace(',', ''))
+            if 500_000 <= val <= 50_000_000:
+                price = val
+                break
+    if not price:
+        return None
+
+    # ── Size ───────────────────────────────────────────────────
+    size = parse_size(text)
+
+    # ── Floor ──────────────────────────────────────────────────
+    fm = re.search(r'(?:floor|ชั้น|fl\.?)[^\d]*(\d+)', text, re.I)
+    floor = int(fm.group(1)) if fm else None
+
+    # ── Bedrooms / Bathrooms ───────────────────────────────────
+    bm  = re.search(r'(\d+)\s*(?:bed(?:room)?s?|br\b|ห้องนอน)', text, re.I)
+    bam = re.search(r'(\d+)\s*(?:bath(?:room)?s?|ba\b|ห้องน้ำ)',  text, re.I)
+    beds  = int(bm.group(1))  if bm  else None
+    baths = int(bam.group(1)) if bam else None
+
+    # ── Furnishing ─────────────────────────────────────────────
+    furnishing = parse_furnishing(text)
+
+    # ── Listing date ───────────────────────────────────────────
+    dm = re.search(
+        r'(\d+\s*(?:day|week|month|year)[s]?\s*ago'
+        r'|\d{1,2}\s+\w+\s+20\d{2}'
+        r'|20\d{2}[/-]\d{2})',
+        text, re.I,
     )
-    print(f"  → DDproperty …")
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-        page.wait_for_timeout(4_000)
+    listed = parse_relative_date(dm.group(0) if dm else "")
 
-        card_selectors = [
-            "[data-testid='listing-card-wrapper']",
-            ".listing-card-container",
-            "li.js-listing-link",
-            "div[class*='item'][class*='list']",
-            "article",
-        ]
-        cards = _extract_cards(page, card_selectors)
-        print(f"    {len(cards)} cards found")
+    # ── Title: first non-trivial line ──────────────────────────
+    title = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if len(line) > 15:
+            title = line[:120]
+            break
 
-        for card in cards[:60]:
-            try:
-                title     = _text(card, "[class*='title'], h2, h3")
-                price_txt = _text(card, "[class*='price']")
-                href      = _attr(card, "a[href]", "href") or _attr(card, "[href]", "href")
-                full_url  = ("https://www.ddproperty.com" + href) if href.startswith("/") else href
+    return {
+        "first_seen":        run_date,
+        "last_seen":         run_date,
+        "listed_month_year": listed,
+        "price_thb":         price,
+        "price_per_sqm":     int(price / size) if size else None,
+        "size_sqm":          size,
+        "floor":             floor,
+        "building":          None,
+        "bedrooms":          beds,
+        "bathrooms":         baths,
+        "furnishing":        furnishing,
+        "view":              None,
+        "title":             title,
+        "source":            source,
+        "url":               href,
+        "fingerprint":       make_fingerprint(size, floor, beds, baths),
+    }
 
-                # Parse beds / baths / size from attribute list
-                full_text = ""
-                try:
-                    full_text = card.inner_text()
-                except Exception:
-                    pass
 
-                price = parse_price(price_txt) or parse_price(full_text)
-                if not price:
-                    continue
-                if title and not is_relevant(title):
-                    # Try the full text as a fallback check
-                    if not is_relevant(full_text):
-                        continue
+def _scrape(page: Page, name: str, urls: list[str], run_date: str,
+            relevance_filter: bool = True) -> list[dict]:
+    """
+    Generic scraper used by every site.
+    Tries each URL in order; stops when cards are found.
+    Uses JS-based card finder (works on React/Next.js with hashed class names).
+    """
+    print(f"  → {name} …")
+    cards: list[dict] = []
 
-                size  = parse_size(full_text)
-                floor = None
-                beds  = None
-                baths = None
-                view  = None
-                furnishing = "Unknown"
+    for url in urls:
+        try:
+            _load_page(page, url)
+            cards = _js_cards(page)
+            if cards:
+                print(f"    {len(cards)} cards at {url}")
+                break
+        except Exception as e:
+            print(f"    {name} ({url}) error: {e}")
 
-                # Floor
-                fm = re.search(r'(?:floor|ชั้น)\s*(\d+)', full_text, re.I)
-                if fm:
-                    floor = int(fm.group(1))
+    if not cards:
+        _save_debug_html(page, name.lower())
+        print(f"    0 cards found — debug HTML saved for inspection")
+        return []
 
-                # Beds
-                bm = re.search(r'(\d+)\s*(?:bed|ห้องนอน)', full_text, re.I)
-                if bm:
-                    beds = int(bm.group(1))
+    records = []
+    for card in cards:
+        # Relevance filter: skip if the card text doesn't mention our condo
+        # (some sites return nearby results mixed in)
+        if relevance_filter and not is_relevant(card.get("text", "")):
+            continue
+        rec = _parse_card(card, name, run_date)
+        if rec:
+            records.append(rec)
 
-                # Baths
-                bam = re.search(r'(\d+)\s*(?:bath|ห้องน้ำ)', full_text, re.I)
-                if bam:
-                    baths = int(bam.group(1))
-
-                furnishing = parse_furnishing(full_text)
-
-                # Listed date
-                date_m = re.search(
-                    r'(\d+\s*(?:day|week|month|year|วัน|สัปดาห์|เดือน)[s\s]*ago'
-                    r'|\d{1,2}\s+\w+\s+20\d{2}'
-                    r'|20\d{2}-\d{2})',
-                    full_text, re.I
-                )
-                listed = parse_relative_date(date_m.group(0) if date_m else "")
-
-                records.append({
-                    "first_seen":        run_date,
-                    "last_seen":         run_date,
-                    "listed_month_year": listed,
-                    "price_thb":         price,
-                    "price_per_sqm":     int(price / size) if size else None,
-                    "size_sqm":          size,
-                    "floor":             floor,
-                    "building":          None,
-                    "bedrooms":          beds,
-                    "bathrooms":         baths,
-                    "furnishing":        furnishing,
-                    "view":              view,
-                    "title":             title[:120] if title else "",
-                    "source":            "DDproperty",
-                    "url":               full_url,
-                    "fingerprint":       make_fingerprint(size, floor, beds, baths),
-                })
-            except Exception as e:
-                pass
-
-    except Exception as e:
-        print(f"    DDproperty error: {e}")
     print(f"    → {len(records)} listings extracted")
     return records
+
+
+# ─────────────────────────────────────────
+#  SITE-SPECIFIC SCRAPERS  (thin wrappers over _scrape)
+# ─────────────────────────────────────────
+
+def scrape_ddproperty(page: Page, run_date: str) -> list[dict]:
+    return _scrape(page, "DDproperty", [
+        # Search page (all condos matching our project name)
+        "https://www.ddproperty.com/en/property-for-sale"
+        "?freetext=Supalai+City+Resort+Rama+8&property_type_code%5B%5D=CONDO",
+        # Fallback: plain text search
+        "https://www.ddproperty.com/en/property-for-sale"
+        "?freetext=ศุภาลัย+ซิตี้+รีสอร์ท+พระราม+8",
+    ], run_date, relevance_filter=False)   # search already scoped to our project
 
 
 def scrape_fazwaz(page: Page, run_date: str) -> list[dict]:
-    records = []
-    url = (
+    return _scrape(page, "Fazwaz", [
         "https://www.fazwaz.com/condominium-for-sale/thailand/bangkok"
-        "/bang-phlat-district/supalai-city-resort-rama-8"
-    )
-    print(f"  → Fazwaz …")
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-        page.wait_for_timeout(4_000)
-
-        card_selectors = [
-            "[class*='PropertyCard']",
-            "[class*='property-card']",
-            "[class*='listing-card']",
-            "article[class*='item']",
-            "div[class*='SearchResult'] > div",
-        ]
-        cards = _extract_cards(page, card_selectors)
-        print(f"    {len(cards)} cards found")
-
-        for card in cards[:60]:
-            try:
-                title     = _text(card, "h2, h3, [class*='title'], [class*='name']")
-                price_txt = _text(card, "[class*='price'], [class*='Price']")
-                href      = _attr(card, "a[href]", "href")
-                full_url  = ("https://www.fazwaz.com" + href) if href.startswith("/") else href
-
-                full_text = ""
-                try:
-                    full_text = card.inner_text()
-                except Exception:
-                    pass
-
-                price = parse_price(price_txt) or parse_price(full_text)
-                if not price:
-                    continue
-
-                size   = parse_size(full_text)
-                floor  = None
-                beds   = None
-                baths  = None
-
-                bm = re.search(r'(\d+)\s*(?:bed|br\b)', full_text, re.I)
-                if bm:
-                    beds = int(bm.group(1))
-                bam = re.search(r'(\d+)\s*(?:bath|ba\b)', full_text, re.I)
-                if bam:
-                    baths = int(bam.group(1))
-                fm = re.search(r'(?:floor|fl\.?)\s*(\d+)', full_text, re.I)
-                if fm:
-                    floor = int(fm.group(1))
-
-                furnishing = parse_furnishing(full_text)
-                date_m = re.search(
-                    r'(\d+\s*(?:day|week|month)[s]?\s*ago|\d{1,2}\s+\w+\s+20\d{2})',
-                    full_text, re.I
-                )
-                listed = parse_relative_date(date_m.group(0) if date_m else "")
-
-                records.append({
-                    "first_seen":        run_date,
-                    "last_seen":         run_date,
-                    "listed_month_year": listed,
-                    "price_thb":         price,
-                    "price_per_sqm":     int(price / size) if size else None,
-                    "size_sqm":          size,
-                    "floor":             floor,
-                    "building":          None,
-                    "bedrooms":          beds,
-                    "bathrooms":         baths,
-                    "furnishing":        furnishing,
-                    "view":              None,
-                    "title":             title[:120] if title else "",
-                    "source":            "Fazwaz",
-                    "url":               full_url,
-                    "fingerprint":       make_fingerprint(size, floor, beds, baths),
-                })
-            except Exception:
-                pass
-
-    except Exception as e:
-        print(f"    Fazwaz error: {e}")
-    print(f"    → {len(records)} listings extracted")
-    return records
+        "/bang-phlat-district/supalai-city-resort-rama-8",
+        "https://www.fazwaz.com/property-for-sale/thailand/bangkok"
+        "/bang-phlat-district/supalai-city-resort-rama-8",
+    ], run_date, relevance_filter=False)
 
 
 def scrape_hipflat(page: Page, run_date: str) -> list[dict]:
-    records = []
-    urls = [
+    return _scrape(page, "Hipflat", [
         "https://www.hipflat.co.th/en/condo/supalai-city-resort-rama-8/listings",
         "https://www.hipflat.co.th/search/en/sale/condos--supalai-city-resort-rama-8",
-    ]
-    print(f"  → Hipflat …")
-    for url in urls:
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-            page.wait_for_timeout(4_000)
-
-            card_selectors = [
-                "[class*='ListingCard']",
-                "[class*='listing-card']",
-                "[class*='property-card']",
-                "article",
-                "li[class*='listing']",
-            ]
-            cards = _extract_cards(page, card_selectors)
-            if cards:
-                print(f"    {len(cards)} cards found at {url}")
-                break
-        except Exception as e:
-            print(f"    Hipflat ({url}) error: {e}")
-            cards = []
-
-    for card in cards[:60]:
-        try:
-            title     = _text(card, "h2, h3, [class*='title']")
-            price_txt = _text(card, "[class*='price'], [class*='Price']")
-            href      = _attr(card, "a[href]", "href")
-            full_url  = ("https://www.hipflat.co.th" + href) if href.startswith("/") else href
-
-            full_text = ""
-            try:
-                full_text = card.inner_text()
-            except Exception:
-                pass
-
-            price = parse_price(price_txt) or parse_price(full_text)
-            if not price:
-                continue
-
-            size   = parse_size(full_text)
-            floor  = None
-            beds   = None
-            baths  = None
-
-            bm = re.search(r'(\d+)\s*(?:bed|br\b|ห้องนอน)', full_text, re.I)
-            if bm:
-                beds = int(bm.group(1))
-            bam = re.search(r'(\d+)\s*(?:bath|ba\b|ห้องน้ำ)', full_text, re.I)
-            if bam:
-                baths = int(bam.group(1))
-            fm = re.search(r'(?:floor|ชั้น|fl\.?)\s*(\d+)', full_text, re.I)
-            if fm:
-                floor = int(fm.group(1))
-
-            furnishing = parse_furnishing(full_text)
-            date_m = re.search(
-                r'(\d+\s*(?:day|week|month)[s]?\s*ago|\d{1,2}\s+\w+\s+20\d{2})',
-                full_text, re.I
-            )
-            listed = parse_relative_date(date_m.group(0) if date_m else "")
-
-            records.append({
-                "first_seen":        run_date,
-                "last_seen":         run_date,
-                "listed_month_year": listed,
-                "price_thb":         price,
-                "price_per_sqm":     int(price / size) if size else None,
-                "size_sqm":          size,
-                "floor":             floor,
-                "building":          None,
-                "bedrooms":          beds,
-                "bathrooms":         baths,
-                "furnishing":        furnishing,
-                "view":              None,
-                "title":             title[:120] if title else "",
-                "source":            "Hipflat",
-                "url":               full_url,
-                "fingerprint":       make_fingerprint(size, floor, beds, baths),
-            })
-        except Exception:
-            pass
-
-    print(f"    → {len(records)} listings extracted")
-    return records
+    ], run_date, relevance_filter=False)
 
 
 def scrape_baania(page: Page, run_date: str) -> list[dict]:
-    records = []
-    url = "https://www.baania.com/en/search?searchText=Supalai+City+Resort+Rama+8&listingType=sale"
-    print(f"  → Baania …")
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-        page.wait_for_timeout(4_000)
-
-        card_selectors = [
-            "[class*='PropertyCard']",
-            "[class*='property-card']",
-            "[class*='listing']",
-            "article",
-        ]
-        cards = _extract_cards(page, card_selectors)
-        print(f"    {len(cards)} cards found")
-
-        for card in cards[:60]:
-            try:
-                title     = _text(card, "h2, h3, [class*='title'], [class*='name']")
-                price_txt = _text(card, "[class*='price']")
-                href      = _attr(card, "a[href]", "href")
-                full_url  = ("https://www.baania.com" + href) if href.startswith("/") else href
-
-                full_text = ""
-                try:
-                    full_text = card.inner_text()
-                except Exception:
-                    pass
-
-                if not is_relevant(title) and not is_relevant(full_text):
-                    continue
-
-                price = parse_price(price_txt) or parse_price(full_text)
-                if not price:
-                    continue
-
-                size   = parse_size(full_text)
-                floor  = None
-                beds   = None
-                baths  = None
-
-                bm = re.search(r'(\d+)\s*(?:bed|br\b|ห้องนอน)', full_text, re.I)
-                if bm:
-                    beds = int(bm.group(1))
-                bam = re.search(r'(\d+)\s*(?:bath|ba\b|ห้องน้ำ)', full_text, re.I)
-                if bam:
-                    baths = int(bam.group(1))
-                fm = re.search(r'(?:floor|ชั้น)\s*(\d+)', full_text, re.I)
-                if fm:
-                    floor = int(fm.group(1))
-
-                furnishing = parse_furnishing(full_text)
-                date_m = re.search(
-                    r'(\d+\s*(?:day|week|month)[s]?\s*ago|\d{1,2}\s+\w+\s+20\d{2})',
-                    full_text, re.I
-                )
-                listed = parse_relative_date(date_m.group(0) if date_m else "")
-
-                records.append({
-                    "first_seen":        run_date,
-                    "last_seen":         run_date,
-                    "listed_month_year": listed,
-                    "price_thb":         price,
-                    "price_per_sqm":     int(price / size) if size else None,
-                    "size_sqm":          size,
-                    "floor":             floor,
-                    "building":          None,
-                    "bedrooms":          beds,
-                    "bathrooms":         baths,
-                    "furnishing":        furnishing,
-                    "view":              None,
-                    "title":             title[:120] if title else "",
-                    "source":            "Baania",
-                    "url":               full_url,
-                    "fingerprint":       make_fingerprint(size, floor, beds, baths),
-                })
-            except Exception:
-                pass
-
-    except Exception as e:
-        print(f"    Baania error: {e}")
-    print(f"    → {len(records)} listings extracted")
-    return records
+    return _scrape(page, "Baania", [
+        "https://www.baania.com/en/search"
+        "?searchText=Supalai+City+Resort+Rama+8&listingType=sale",
+    ], run_date, relevance_filter=True)   # returns mixed results → keep filter
 
 
 def scrape_propertyscout(page: Page, run_date: str) -> list[dict]:
-    records = []
-    url = (
+    return _scrape(page, "PropertyScout", [
         "https://propertyscout.co.th/en/search"
-        "?query=Supalai+City+Resort+Rama+8&type=sale&property=condo"
-    )
-    print(f"  → PropertyScout …")
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-        page.wait_for_timeout(4_000)
+        "?query=Supalai+City+Resort+Rama+8&type=sale&property=condo",
+        "https://propertyscout.co.th/en/search"
+        "?query=supalai+rama+8&type=sale&property=condo",
+    ], run_date, relevance_filter=True)
 
-        card_selectors = [
-            "[class*='PropertyCard']",
-            "[class*='property-card']",
-            "[class*='listing-card']",
-            "article",
-            "div[class*='card']",
-        ]
-        cards = _extract_cards(page, card_selectors)
-        print(f"    {len(cards)} cards found")
-
-        for card in cards[:60]:
-            try:
-                title     = _text(card, "h2, h3, [class*='title']")
-                price_txt = _text(card, "[class*='price']")
-                href      = _attr(card, "a[href]", "href")
-                full_url  = ("https://propertyscout.co.th" + href) if href.startswith("/") else href
-
-                full_text = ""
-                try:
-                    full_text = card.inner_text()
-                except Exception:
-                    pass
-
-                if not is_relevant(title) and not is_relevant(full_text):
-                    continue
-
-                price = parse_price(price_txt) or parse_price(full_text)
-                if not price:
-                    continue
-
-                size  = parse_size(full_text)
-                floor = None
-                beds  = None
-                baths = None
-
-                bm = re.search(r'(\d+)\s*(?:bed|br\b)', full_text, re.I)
-                if bm:
-                    beds = int(bm.group(1))
-                bam = re.search(r'(\d+)\s*(?:bath|ba\b)', full_text, re.I)
-                if bam:
-                    baths = int(bam.group(1))
-                fm = re.search(r'(?:floor|fl\.?)\s*(\d+)', full_text, re.I)
-                if fm:
-                    floor = int(fm.group(1))
-
-                furnishing = parse_furnishing(full_text)
-                date_m = re.search(
-                    r'(\d+\s*(?:day|week|month)[s]?\s*ago|\d{1,2}\s+\w+\s+20\d{2})',
-                    full_text, re.I
-                )
-                listed = parse_relative_date(date_m.group(0) if date_m else "")
-
-                records.append({
-                    "first_seen":        run_date,
-                    "last_seen":         run_date,
-                    "listed_month_year": listed,
-                    "price_thb":         price,
-                    "price_per_sqm":     int(price / size) if size else None,
-                    "size_sqm":          size,
-                    "floor":             floor,
-                    "building":          None,
-                    "bedrooms":          beds,
-                    "bathrooms":         baths,
-                    "furnishing":        furnishing,
-                    "view":              None,
-                    "title":             title[:120] if title else "",
-                    "source":            "PropertyScout",
-                    "url":               full_url,
-                    "fingerprint":       make_fingerprint(size, floor, beds, baths),
-                })
-            except Exception:
-                pass
-
-    except Exception as e:
-        print(f"    PropertyScout error: {e}")
-    print(f"    → {len(records)} listings extracted")
-    return records
 
 
 # ─────────────────────────────────────────

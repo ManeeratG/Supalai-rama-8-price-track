@@ -284,14 +284,23 @@ _JS_FIND_CARDS = """
 """
 
 
-def _load_page(page: Page, url: str, extra_wait_ms: int = 4000):
+def _load_page(page: Page, url: str, extra_wait_ms: int = 5000):
     """Navigate, wait for network to settle, then scroll to trigger lazy loads."""
     page.goto(url, wait_until="domcontentloaded", timeout=45_000)
     try:
-        page.wait_for_load_state("networkidle", timeout=10_000)
+        page.wait_for_load_state("networkidle", timeout=12_000)
     except Exception:
         pass   # networkidle timeout is fine — proceed anyway
     page.wait_for_timeout(extra_wait_ms)
+    # Log page title + final URL so we can see if we were redirected / got a CAPTCHA
+    try:
+        title   = page.title()
+        final   = page.url
+        body_snippet = (page.evaluate("document.body.innerText") or "")[:300].replace("\n", " ")
+        print(f"    title={title!r}  url={final}")
+        print(f"    body[0:300]={body_snippet!r}")
+    except Exception:
+        pass
     # Scroll halfway then to bottom to trigger lazy-loaded cards
     try:
         page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.5)")
@@ -305,8 +314,11 @@ def _load_page(page: Page, url: str, extra_wait_ms: int = 4000):
 def _js_cards(page: Page) -> list[dict]:
     """Run the JS card-finder in the live browser DOM; returns list of {text, href}."""
     try:
-        return page.evaluate(_JS_FIND_CARDS) or []
-    except Exception:
+        cards = page.evaluate(_JS_FIND_CARDS) or []
+        print(f"    js_cards found: {len(cards)}")
+        return cards
+    except Exception as e:
+        print(f"    js_cards error: {e}")
         return []
 
 
@@ -315,7 +327,7 @@ def _save_debug_html(page: Page, site_name: str):
     try:
         debug_dir = DATA_DIR / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
-        path = debug_dir / f"{site_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+        path = debug_dir / f"{site_name}.html"   # fixed name → overwrites each run
         path.write_text(page.content(), encoding="utf-8")
         print(f"    Debug HTML saved → {path}")
     except Exception:

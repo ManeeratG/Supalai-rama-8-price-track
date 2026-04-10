@@ -43,7 +43,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add Supalai_Rama8_Price_Track.xlsx data/property_history.json || true
+          git add Supalai_Rama8_Price_Track.xlsx data/property_history.json data/debug/ || true
 
           # Only commit if there are changes
           if git diff --cached --quiet; then

@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "first_seen": "2026-05-15",
+    "last_seen": "2026-05-15",
+    "listed_month_year": "2026-05",
+    "price_thb": 5250000,
+    "price_per_sqm": 88983,
+    "size_sqm": 59.0,
+    "floor": 14,
+    "building": null,
+    "bedrooms": null,
+    "bathrooms": null,
+    "furnishing": "Unknown",
+    "view": null,
+    "title": "🔥 ขายด่วน!! คอนโด Supalai Veranda Ramkhamhaeng",
+    "source": "LivingInsider",
+    "url": "https://www.livinginsider.com/detail/condo-for-sale-condo-supalai-veranda-ramkhamheang-2bedroom-2187152",
+    "fingerprint": "s59.0_f14_brNone_baNone"
+  },
+  {
+    "first_seen": "2026-05-15",
+    "last_seen": "2026-05-15",
+    "listed_month_year": "2026-05",
+    "price_thb": 5900000,
+    "price_per_sqm": 89393,
+    "size_sqm": 66.0,
+    "floor": 6,
+    "building": null,
+    "bedrooms": null,
+    "bathrooms": null,
+    "furnishing": "Unknown",
+    "view": null,
+    "title": "🔥 ขายด่วน!! คอนโด Supalai Veranda Ramkhamhaeng",
+    "source": "LivingInsider",
+    "url": "https://www.livinginsider.com/detail/condo-for-sale-condo-supalai-veranda-ramkhamheang-2bedroom-2187146",
+    "fingerprint": "s66.0_f6_brNone_baNone"
+  }
+]

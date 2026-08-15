@@ -37,7 +37,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 2450000,
     "price_per_sqm": 70000,
@@ -73,7 +73,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 3990000,
     "price_per_sqm": 70000,
@@ -109,7 +109,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 3450000,
     "price_per_sqm": 73404,
@@ -127,7 +127,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 6400000,
     "price_per_sqm": 86486,
@@ -145,7 +145,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 1790000,
     "price_per_sqm": 57741,
@@ -163,7 +163,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 3900000,
     "price_per_sqm": 65000,
@@ -181,7 +181,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 2100000,
     "price_per_sqm": 56756,
@@ -199,7 +199,7 @@
   },
   {
     "first_seen": "2026-08-01",
-    "last_seen": "2026-08-01",
+    "last_seen": "2026-08-15",
     "listed_month_year": "2026-08",
     "price_thb": 2390000,
     "price_per_sqm": 53111,
@@ -214,5 +214,59 @@
     "source": "DDproperty",
     "url": "https://www.ddproperty.com/en/agent/connex-property-13504900",
     "fingerprint": "s45.0_fNone_brNone_baNone"
+  },
+  {
+    "first_seen": "2026-08-15",
+    "last_seen": "2026-08-15",
+    "listed_month_year": "2026-08",
+    "price_thb": 3820000,
+    "price_per_sqm": 83043,
+    "size_sqm": 46.0,
+    "floor": null,
+    "building": null,
+    "bedrooms": null,
+    "bathrooms": null,
+    "furnishing": "Unknown",
+    "view": null,
+    "title": "Supalai City Resort Rama 8, Bangkok",
+    "source": "DDproperty",
+    "url": "https://www.ddproperty.com/en/agent/jesadakorn-cohn-14458669 | https://www.ddproperty.com/en/agent/bussara-sri-at-14447364",
+    "fingerprint": "s46.0_fNone_brNone_baNone"
+  },
+  {
+    "first_seen": "2026-08-15",
+    "last_seen": "2026-08-15",
+    "listed_month_year": "2026-08",
+    "price_thb": 2600000,
+    "price_per_sqm": 68421,
+    "size_sqm": 38.0,
+    "floor": null,
+    "building": null,
+    "bedrooms": null,
+    "bathrooms": null,
+    "furnishing": "Unknown",
+    "view": null,
+    "title": "Supalai City Resort Rama 8, Bangkok",
+    "source": "DDproperty",
+    "url": "https://www.ddproperty.com/en/agent/homemark-2309099",
+    "fingerprint": "s38.0_fNone_brNone_baNone"
+  },
+  {
+    "first_seen": "2026-08-15",
+    "last_seen": "2026-08-15",
+    "listed_month_year": "2026-08",
+    "price_thb": 4000000,
+    "price_per_sqm": 64516,
+    "size_sqm": 62.0,
+    "floor": null,
+    "building": null,
+    "bedrooms": null,
+    "bathrooms": null,
+    "furnishing": "Unknown",
+    "view": null,
+    "title": "Sirirut Havee Akehurst",
+    "source": "DDproperty",
+    "url": "https://www.ddproperty.com/en/agent/sirirut-havee-akehurst-17834001",
+    "fingerprint": "s62.0_fNone_brNone_baNone"
   }
 ]
